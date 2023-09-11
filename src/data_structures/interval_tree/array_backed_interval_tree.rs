@@ -79,6 +79,26 @@ impl<N: Ord + Clone + Copy, D: PartialEq> PartialEq for Entry<N, D> {
     }
 }
 
+// Custom Ord and PartialOrd implementations for Entry
+// required to avoid comparing the `max` field
+impl<N: Ord + Clone + Copy, D: Ord> Ord for Entry<N, D> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.interval().end.cmp(&other.interval().end) {
+            std::cmp::Ordering::Equal => self.interval().end.cmp(&other.interval().end),
+            other => other,
+        }
+    }
+}
+
+impl<N: Ord + Clone + Copy, D: PartialOrd> PartialOrd for Entry<N, D> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.interval().end.partial_cmp(&other.interval().end) {
+            Some(std::cmp::Ordering::Equal) => self.interval().end.partial_cmp(&other.interval().end),
+            other => other,
+        }
+    }
+}
+
 impl<N: Ord + Clone + Copy, D> Default for ArrayBackedIntervalTree<N, D> {
     fn default() -> Self {
         ArrayBackedIntervalTree {
