@@ -283,6 +283,55 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
             }
         }
     }
+    
+    /// Returns the first entry in the tree
+    pub fn first<'a>(&'a self) -> &'a Entry<N, D> {
+        &self.entries[0]
+    }
+    /// Returns the last entry in the tree
+    pub fn last<'a>(&'a self) -> &'a Entry<N, D> {
+        &self.entries[self.entries.len() - 1]
+    }
+
+    /// Perform intersection of interval tree with an interval\
+    /// The intersection should produce a subset of the original interval tree
+    /// If no overlap is found - returns an empty tree
+    /// 
+    /// # Arguments
+    /// 
+    /// * `interval` - The interval for which overlaps are to be found in the index. Can also be a `Range`.
+    /// 
+    /// # Panics
+    /// 
+    /// Panics if this `IITree` instance has not been indexed yet.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use bio::data_structures::interval_tree::ArrayBackedIntervalTree;
+    /// use bio::utils::Interval;
+    /// 
+    /// let mut tree = ArrayBackedIntervalTree::new();
+    /// tree.insert(12..34, 0);
+    /// tree.insert(0..23, 1);
+    /// tree.insert(34..56, 2);
+    /// 
+    /// tree.index();
+    /// 
+    /// let iv = Interval::new(20..40).unwrap();
+    /// 
+    /// let overlap = tree.intersect(iv);
+    /// 
+    /// let mut expected = ArrayBackedIntervalTree::new();
+    /// expected.insert(20..34, 0);
+    /// expected.insert(20..23, 1);
+    /// expected.insert(34..40, 2);
+    /// 
+    /// assert_eq!(overlap, expected);
+    /// ```
+    pub fn intersect<I: Into<Interval<N>>>(&self, interval: I) -> ArrayBackedIntervalTree<N,D> {
+        unimplemented!()
+    }
 }
 
 fn max3<T: Ord>(a: T, b: T, c: T) -> T {
@@ -424,6 +473,27 @@ mod tests {
         }
         res_tree.index();
         assert_eq!(tree, res_tree);
+    }
+
+    #[test]
+    fn test_tree_intersect_interval() {
+        let mut tree = ArrayBackedIntervalTree::new();
+        tree.insert(12..34, 0);
+        tree.insert(0..23, 1);
+        tree.insert(34..56, 2);
+
+        tree.index();
+
+        let iv = Interval::new(20..40).unwrap();
+
+        let overlap = tree.intersect(iv);
+
+        let mut expected = ArrayBackedIntervalTree::new();
+        expected.insert(20..34, 0);
+        expected.insert(20..23, 1);
+        expected.insert(34..40, 2);
+
+        assert_eq!(overlap, expected);
     }
 
     proptest! {

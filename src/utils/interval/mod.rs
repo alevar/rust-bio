@@ -24,7 +24,7 @@
 
 pub mod errors;
 
-use std::ops::{Deref, Range};
+use std::ops::{Deref, DerefMut, Range};
 
 pub use self::errors::{Error, Result};
 
@@ -72,6 +72,12 @@ impl<N: Ord + Clone> Deref for Interval<N> {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl DerefMut for Interval<i32> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
