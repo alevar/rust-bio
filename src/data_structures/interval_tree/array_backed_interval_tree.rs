@@ -211,6 +211,24 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
         buf
     }
 
+    /// Returns the number of entries in the tree
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use bio::data_structures::interval_tree::ArrayBackedIntervalTree;
+    /// 
+    /// let mut tree = ArrayBackedIntervalTree::new();
+    /// tree.insert(12..34, 0);
+    /// tree.insert(0..23, 1);
+    /// tree.insert(34..56, 2);
+    /// 
+    /// assert_eq!(tree.len(), 3);
+    /// ```
+    pub fn len<'a>(&'a self) -> usize {
+        self.entries.len()
+    }
+
     /// Find overlapping intervals in the index
     ///
     /// # Arguments
@@ -494,6 +512,16 @@ mod tests {
         expected.insert(34..40, 2);
 
         assert_eq!(overlap, expected);
+    }
+
+    #[test]
+    fn test_tree_size() {
+        let mut tree = ArrayBackedIntervalTree::new();
+        tree.insert(12..34, 0);
+        tree.insert(0..23, 1);
+        tree.insert(34..56, 2);
+
+        assert_eq!(tree.len(), 3);
     }
 
     proptest! {
