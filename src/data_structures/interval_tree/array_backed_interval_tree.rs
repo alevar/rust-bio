@@ -1,155 +1,84 @@
-//! Interval tree, a data structure for efficiently storing and searching intervals.
-//!
-//! This implementation is based on the sorted array version as described/given in
-//! https://github.com/lh3/cgranges / https://github.com/lh3/cgranges/blob/master/cpp/IITree.h
-//!
-//! It uses the same conventions as `crate::data_structures::interval_tree::IntervalTree`.
-//! Note that if you do not use the `ArrayBackedIntervalTree::from_iter` constructor, you have to call `index(&mut self)`
-//! first before `find()`-ing overlaps.
-//!
-//! # Example
-//! ```
-//! use bio::data_structures::interval_tree::ArrayBackedIntervalTree;
-//! use bio::utils::Interval;
-//! use std::iter::FromIterator;
-//!
-//! let mut tree = ArrayBackedIntervalTree::new();
-//! tree.insert(12..34, 0);
-//! tree.insert(0..23, 1);
-//! tree.insert(34..56, 2);
-//! // since we did at least one manual insert, we have to index the tree
-//! tree.index();
-//! let i1 = &tree.find(22..25)[0];
-//! assert_eq!(i1.interval().start, 0);
-//! assert_eq!(i1.interval().end, 23);
-//! assert_eq!(i1.data(), &1u32);
-//!
-//! let tree =
-//!     ArrayBackedIntervalTree::from_iter(vec![(12..34, 0), (0..23, 1), (34..56, 2)].into_iter());
-//! // no call to `index` needed here, since that happens in `from_iter` already
-//! let i2 = &tree.find(22..25)[1];
-//! assert_eq!(i2.interval().start, 12);
-//! assert_eq!(i2.interval().end, 34);
-//! assert_eq!(i2.data(), &0u32);
-//! ```
-
 use num_traits::Bounded;
 
 use crate::utils::Interval;
 use std::cmp::min;
 use std::iter::FromIterator;
 
-/// A `find` query on the interval tree directly returns references 
-/// to the intervals in the tree.
-#[derive(Clone, Hash, Debug, Serialize, Deserialize)]
-pub struct Entry<N: Ord + Clone + Copy, D> {
-    data: D,
-    interval: Interval<N>,
-    max: N,
+/// A `find` query on the interval tree does not directly return references to the intervals in the
+/// tree but wraps the fields `interval` and `data` in an `Entry`.
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
+struct InternalEntry<E: EntryT> {
+    data: E,
+    max: E::N,
+    index: usize, // the position of the entry when it was first inserted
 }
 
-impl<N: Ord + Clone + Copy + Bounded, D> Entry<N, D> {
-    pub fn new(interval: Interval<N>, data: D) -> Self {
-        Entry {
-            data,
-            interval,
-            max: N::max_value(),
-        }
+impl<E> InternalEntry<E>
+where
+    E: EntryT,
+{
+    fn interval(&self) -> &Interval<E::N> {
+        self.data.interval()
     }
 }
 
-// write implementations for InternalEntry
-impl<N: Ord + Clone + Copy, D> Entry<N, D> {
-    pub fn data(&self) -> &D {
-        &self.data
-    }
+pub trait EntryT {
+    type N: Ord + Clone + Copy + std::fmt::Debug;
 
-    pub fn interval(&self) -> &Interval<N> {
-        &self.interval
-    }
+    fn interval(&self) -> &Interval<Self::N>;
 }
 
-// Custom Eq and PartialEq implementations for Entry
-// required to avoid comparing the `max` field
-impl<N: Ord + Clone + Copy, D: PartialEq> Eq for Entry<N, D> {}
-
-impl<N: Ord + Clone + Copy, D: PartialEq> PartialEq for Entry<N, D> {
-    fn eq(&self, other: &Self) -> bool {
-        self.data == other.data && self.interval == other.interval
-    }
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct ArrayBackedIntervalTree<E>
+where
+    E: EntryT,
+{
+    entries: Vec<InternalEntry<E>>,
+    index: Vec<usize>, // holds mappings from the index of the original entry to the index in the tree. used for retrieval
+    max_level: usize,
+    indexed: bool,
 }
 
-// Custom Ord and PartialOrd implementations for Entry
-// required to avoid comparing the `max` field
-impl<N: Ord + Clone + Copy, D: Ord> Ord for Entry<N, D> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.interval().end.cmp(&other.interval().end) {
-            std::cmp::Ordering::Equal => self.interval().end.cmp(&other.interval().end),
-            other => other,
-        }
-    }
-}
-
-impl<N: Ord + Clone + Copy, D: PartialOrd> PartialOrd for Entry<N, D> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self.interval().end.partial_cmp(&other.interval().end) {
-            Some(std::cmp::Ordering::Equal) => self.interval().end.partial_cmp(&other.interval().end),
-            other => other,
-        }
-    }
-}
-
-impl<N: Ord + Clone + Copy, D> Default for ArrayBackedIntervalTree<N, D> {
+impl<E> Default for ArrayBackedIntervalTree<E>
+where
+    E: EntryT,
+    E::N: Default,
+{
     fn default() -> Self {
         ArrayBackedIntervalTree {
-            entries: vec![],
+            entries: Vec::new(),
+            index: Vec::new(),
             max_level: 0,
             indexed: false,
         }
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
-pub struct ArrayBackedIntervalTree<N: Ord + Clone + Copy, D> {
-    entries: Vec<Entry<N, D>>,
-    max_level: usize,
-    indexed: bool,
-}
-
-impl<N, D, V> FromIterator<(V, D)> for ArrayBackedIntervalTree<N, D>
+impl<E> ArrayBackedIntervalTree<E>
 where
-    V: Into<Interval<N>>,
-    N: Ord + Clone + Copy,
-    D: Clone,
+    E: EntryT,
+    E::N: Default,
 {
-    fn from_iter<T: IntoIterator<Item = (V, D)>>(iter: T) -> Self {
-        let mut tree = Self::new();
-        iter.into_iter()
-            .for_each(|(interval, data)| tree.insert(interval, data));
-        tree.index();
-        tree
-    }
-}
-
-impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
     pub fn new() -> Self {
         Default::default()
     }
 
-    pub fn insert<I: Into<Interval<N>>>(&mut self, interval: I, data: D) {
-        let interval = interval.into();
-        let max = interval.end;
-        self.entries.push(Entry {
-            interval,
-            data,
+    pub fn insert(&mut self, entry: E) {
+        let max = entry.interval().end;
+        self.entries.push(InternalEntry {
+            data: entry,
             max,
+            index: self.entries.len(),
         });
+        self.index.push(self.entries.len()-1);
         self.indexed = false;
     }
 
     pub fn index(&mut self) {
         if !self.indexed {
-            self.entries.sort_by_key(|e| e.interval.start);
+            self.entries.sort_by_key(|e| e.interval().start);
+            // construct index by pulling index from entries after sort
+            self.index = self.entries.iter().map(|e| e.index).collect();
             self.index_core();
             self.indexed = true;
         }
@@ -166,7 +95,7 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
         let mut last_value = a[0].max;
         (0..n).step_by(2).for_each(|i| {
             last_i = i;
-            a[i].max = a[i].interval.end;
+            a[i].max = a[i].interval().end;
             last_value = a[i].max;
         });
         let mut k = 1;
@@ -179,7 +108,7 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
                 // traverse all nodes at level k
                 let end_left = a[i - x].max; // max value of the left child
                 let end_right = if i + x < n { a[i + x].max } else { last_value }; // max value of the right child
-                let end = max3(a[i].interval.end, end_left, end_right);
+                let end = max3(a[i].interval().end, end_left, end_right);
                 a[i].max = end;
             }
             last_i = if (last_i >> k & 1) > 0 {
@@ -195,23 +124,12 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
         self.max_level = k - 1;
     }
 
-    /// Find overlapping intervals in the index.
-    /// Returns a vector of entries, consisting of the interval and its associated data.
-    ///
+    /// Get the entry at the given index
+    /// Returns `None` if the index is out of bounds
+    /// 
     /// # Arguments
-    ///
-    /// * `interval` - The interval for which overlaps are to be found in the index. Can also be a `Range`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this `IITree` instance has not been indexed yet.
-    pub fn find<I: Into<Interval<N>>>(&self, interval: I) -> Vec<&Entry<N, D>> {
-        let mut buf = Vec::with_capacity(512);
-        self.find_into(interval, &mut buf);
-        buf
-    }
-
-    /// Returns the number of entries in the tree
+    /// 
+    /// * `index` - The index of the entry to get
     /// 
     /// # Example
     /// 
@@ -222,11 +140,33 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
     /// tree.insert(12..34, 0);
     /// tree.insert(0..23, 1);
     /// tree.insert(34..56, 2);
+    /// tree.index()
     /// 
-    /// assert_eq!(tree.len(), 3);
-    /// ```
-    pub fn len<'a>(&'a self) -> usize {
-        self.entries.len()
+    /// assert_eq!(tree.get(0), Some(&0));
+    /// assert_eq!(tree.get(1), Some(&1));
+    /// assert_eq!(tree.get(2), Some(&2));
+    pub fn get(&self, index: usize) -> Option<&E> {
+        let tmp = self.index.get(index);
+        tmp.map(|&i| &self.entries[i].data)
+    }
+
+    /// Find overlapping intervals in the index.
+    /// Returns a vector of entries, consisting of the interval and its associated data.
+    ///
+    /// # Arguments
+    ///
+    /// * `interval` - The interval for which overlaps are to be found in the index. Can also be a `Range`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this `IITree` instance has not been indexed yet.
+    pub fn find<I>(&self, interval: I) -> Vec<&E>
+    where
+        I: Into<Interval<E::N>>,
+    {
+        let mut buf = Vec::with_capacity(512);
+        self.find_into(interval, &mut buf);
+        buf
     }
 
     /// Find overlapping intervals in the index
@@ -239,11 +179,14 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
     /// # Panics
     ///
     /// Panics if this `IITree` instance has not been indexed yet.
-    pub fn find_into<'b, 'a: 'b, I: Into<Interval<N>>>(
+    pub fn find_into<'b, 'a: 'b, I>(
         &'a self,
         interval: I,
-        results: &'b mut Vec<&'a Entry<N, D>>,
-    ) {
+        results: &'b mut Vec<&'a E>,
+    ) 
+    where
+        I: Into<Interval<E::N>>,
+    {
         if !self.indexed {
             panic!("This IITree has not been indexed yet. Call `index()` first.")
         }
@@ -267,12 +210,12 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
                 let i0 = x >> k << k;
                 let i1 = min(i0 + (1 << (k + 1)) - 1, n);
                 for (i, node) in a.iter().enumerate().take(i1).skip(i0) {
-                    if node.interval.start >= end {
+                    if node.interval().start >= end {
                         break;
                     }
-                    if start < node.interval.end {
+                    if start < node.interval().end {
                         // if overlap, append to `results`
-                        results.push(&self.entries[i]);
+                        results.push(&self.entries[i].data);
                     }
                 }
             } else if !w {
@@ -289,10 +232,10 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
                     stack[t].w = false;
                     t += 1;
                 }
-            } else if x < n && a[x].interval.start < end {
+            } else if x < n && a[x].interval().start < end {
                 // need to push the right child
-                if start < a[x].interval.end {
-                    results.push(&self.entries[x]);
+                if start < a[x].interval().end {
+                    results.push(&self.entries[x].data);
                 }
                 stack[t].k = k - 1;
                 stack[t].x = x + (1 << (k - 1));
@@ -301,60 +244,119 @@ impl<N: Ord + Clone + Copy, D: Clone> ArrayBackedIntervalTree<N, D> {
             }
         }
     }
-    
+
     /// Returns the first entry in the tree
-    pub fn first<'a>(&'a self) -> &'a Entry<N, D> {
-        &self.entries[0]
+    pub fn first<'a>(&'a self) -> Option<&'a E> {
+        match self.entries.first() {
+            Some(entry) => Some(&entry.data),
+            None => None,
+        }
+    }
+    pub fn first_mut<'a>(&'a mut self) -> Option<&'a mut E> {
+        match self.entries.first_mut() {
+            Some(entry) => Some(&mut entry.data),
+            None => None,
+            
+        }
     }
     /// Returns the last entry in the tree
-    pub fn last<'a>(&'a self) -> &'a Entry<N, D> {
-        &self.entries[self.entries.len() - 1]
+    pub fn last<'a>(&'a self) -> Option<&'a E> {
+        match self.entries.last() {
+            Some(entry) => Some(&entry.data),
+            None => None,
+        }
+    }
+    pub fn last_mut<'a>(&'a mut self) -> Option<&'a mut E> {
+        match self.entries.last_mut() {
+            Some(entry) => Some(&mut entry.data),
+            None => None,
+        }
     }
 
-    /// Perform intersection of interval tree with an interval\
-    /// The intersection should produce a subset of the original interval tree
-    /// If no overlap is found - returns an empty tree
-    /// 
-    /// # Arguments
-    /// 
-    /// * `interval` - The interval for which overlaps are to be found in the index. Can also be a `Range`.
-    /// 
-    /// # Panics
-    /// 
-    /// Panics if this `IITree` instance has not been indexed yet.
+    /// Returns the number of entries in the tree
     /// 
     /// # Example
     /// 
     /// ```
     /// use bio::data_structures::interval_tree::ArrayBackedIntervalTree;
-    /// use bio::utils::Interval;
     /// 
     /// let mut tree = ArrayBackedIntervalTree::new();
     /// tree.insert(12..34, 0);
     /// tree.insert(0..23, 1);
     /// tree.insert(34..56, 2);
     /// 
-    /// tree.index();
-    /// 
-    /// let iv = Interval::new(20..40).unwrap();
-    /// 
-    /// let overlap = tree.intersect(iv);
-    /// 
-    /// let mut expected = ArrayBackedIntervalTree::new();
-    /// expected.insert(20..34, 0);
-    /// expected.insert(20..23, 1);
-    /// expected.insert(34..40, 2);
-    /// 
-    /// assert_eq!(overlap, expected);
+    /// assert_eq!(tree.len(), 3);
     /// ```
-    pub fn intersect<I: Into<Interval<N>>>(&self, interval: I) -> ArrayBackedIntervalTree<N,D> {
-        unimplemented!()
+    pub fn len<'a>(&'a self) -> usize {
+        self.entries.len()
+    }
+}
+
+impl<E> FromIterator<E> for ArrayBackedIntervalTree<E>
+where
+    E: EntryT,
+    E::N: Default,
+{
+    fn from_iter<T: IntoIterator<Item = E>>(iter: T) -> Self {
+        let mut tree = Self::new();
+        iter.into_iter()
+            .for_each(|entry| tree.insert(entry));
+        tree.index();
+        tree
+    }
+}
+
+/// Iterator over the reference of the tree
+pub struct ArrayBackedIntervalTreeIter<'a, E>
+where
+    E: 'a,
+    E: EntryT,
+    E::N: Default,
+{
+    abit: &'a ArrayBackedIntervalTree<E>,
+    i: usize,
+}
+
+// Implement Iterator for ArrayBackedIntervalTreeIter
+impl<'a, E> Iterator for ArrayBackedIntervalTreeIter<'a, E>
+where
+    E: EntryT,
+    E::N: Default,
+{
+    type Item = &'a E;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i >= self.abit.entries.len() {
+            None
+        } else {
+            let item = &self.abit.entries[self.i];
+            self.i += 1;
+            Some(&item.data)
+        }
+    }
+}
+
+// Implement IntoIterator for ArrayBackedIntervalTree
+impl<'a, E> IntoIterator for &'a ArrayBackedIntervalTree<E>
+where
+    E: EntryT,
+    E::N: Default,
+{
+    type Item = &'a E;
+    type IntoIter = ArrayBackedIntervalTreeIter<'a, E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ArrayBackedIntervalTreeIter {
+            abit: self,
+            i: 0,
+        }
     }
 }
 
 fn max3<T: Ord>(a: T, b: T, c: T) -> T {
     a.max(b.max(c))
 }
+
 
 #[derive(Clone, Copy)]
 struct StackCell {
@@ -376,37 +378,34 @@ impl StackCell {
     }
 }
 
-/// Iterator over the reference of the tree
-pub struct ArrayBackedIntervalTreeIter<'a, N: Ord + Clone + Copy, D> {
-    abit: &'a ArrayBackedIntervalTree<N,D>,
-    i: usize,
+#[derive(Clone, Debug, PartialEq)]
+struct Entry<N: Ord + Clone + Copy + std::fmt::Debug> {
+    interval: Interval<N>,
+    data: usize,
 }
 
-// Implement Iterator for ArrayBackedIntervalTreeIter
-impl<'a, N: Ord + Clone + Copy, D> Iterator for ArrayBackedIntervalTreeIter<'a, N, D> {
-    type Item = &'a Entry<N,D>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.i >= self.abit.entries.len() {
-            None
-        } else {
-            self.i += 1;
-            Some(&self.abit.entries[self.i - 1])
-        }
+// Implement the EntryT trait for Entry
+impl<N: Ord + Clone + Copy + std::fmt::Debug> EntryT for Entry<N> {
+    type N = N;
+
+    fn interval(&self) -> &Interval<N> {
+        &self.interval
     }
 }
 
-// Implement IntoIterator for ArrayBackedIntervalTree
-impl<'a, N: Ord + Clone + Copy, D> IntoIterator for &'a ArrayBackedIntervalTree<N,D>{
-    type Item = &'a Entry<N,D>;
-    type IntoIter = ArrayBackedIntervalTreeIter<'a, N, D>;
-    fn into_iter(self) -> Self::IntoIter {
-        ArrayBackedIntervalTreeIter {
-            abit: self,
-            i: 0,
-        }
+impl<N: Ord + Clone + Copy + std::fmt::Debug> Entry<N> {
+    pub fn new(interval: Interval<N>, data: usize) -> Self {
+        Entry { interval, data }
     }
 }
 
+impl<'a, N: Ord + Clone + Copy + std::fmt::Debug> EntryT for &'a Entry<N> {
+    type N = N;
+
+    fn interval(&self) -> &Interval<N> {
+        &self.interval
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -415,11 +414,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_tree_of_references() {
+        // create objects in vec and add reference to the tree
+        let mut entries = Vec::new();
+        entries.push(Entry::new((12..34).into(), 0));
+        entries.push(Entry::new((0..23).into(), 1));
+        entries.push(Entry::new((34..56).into(), 2));
+
+        let mut tree: ArrayBackedIntervalTree<&Entry<i32>> = ArrayBackedIntervalTree::new();
+        for entry in &entries {
+            tree.insert(entry);
+        }
+        tree.index();
+    }
+
+    #[test]
     fn test_example() {
-        let mut tree = ArrayBackedIntervalTree::new();
-        tree.insert(12..34, 0);
-        tree.insert(0..23, 1);
-        tree.insert(34..56, 2);
+        let mut tree: ArrayBackedIntervalTree<Entry<i32>> = ArrayBackedIntervalTree::new();
+        tree.insert(Entry::new(
+            (12..34).into(),
+            0,
+        ));
+        tree.insert(Entry::new(
+            (0..23).into(),
+            1,
+        ));
+        tree.insert(Entry::new(
+            (34..56).into(),
+            2,
+        ));
         tree.index();
         let overlap = tree.find(22..25);
 
@@ -440,9 +463,15 @@ mod tests {
     /// when indexing
     #[test]
     fn test_disjoint_two_element_search() {
-        let mut tree = ArrayBackedIntervalTree::new();
-        tree.insert(12..34, 0);
-        tree.insert(40..56, 1);
+        let mut tree: ArrayBackedIntervalTree<Entry<i32>> = ArrayBackedIntervalTree::new();
+        tree.insert(Entry::new(
+            (12..34).into(),
+            0,
+        ));
+        tree.insert(Entry::new(
+            (40..56).into(),
+            1,
+        ));
         tree.index();
         let overlap = tree.find(40..41);
 
@@ -474,52 +503,49 @@ mod tests {
         assert_ne!(e1, e2);
     }
 
-    /// Test iterator over the reference of the tree
-    /// (i.e. the tree itself is not moved)
-    /// adds all entries to a new tree and compares
+//     /// Test iterator over the reference of the tree
+//     /// (i.e. the tree itself is not moved)
+//     /// adds all entries to a new tree and compares
     #[test]
     fn test_iter_over_tree() {
-        let mut tree = ArrayBackedIntervalTree::new();
-        tree.insert(12..34, 0);
-        tree.insert(0..23, 1);
-        tree.insert(34..56, 2);
+        let mut tree: ArrayBackedIntervalTree<Entry<i32>> = ArrayBackedIntervalTree::new();
+        tree.insert(Entry::new(
+            (12..34).into(),
+            0,
+        ));
+        tree.insert(Entry::new(
+            (0..23).into(),
+            1,
+        ));
+        tree.insert(Entry::new(
+            (34..56).into(),
+            2,
+        ));
         tree.index();
 
-        let mut res_tree = ArrayBackedIntervalTree::new();
+        let mut res_tree: ArrayBackedIntervalTree<Entry<i32>> = ArrayBackedIntervalTree::new();
         for entry in &tree {
-            res_tree.insert(entry.interval.clone(), entry.data.clone());
+            res_tree.insert(entry.clone());
         }
         res_tree.index();
         assert_eq!(tree, res_tree);
     }
 
     #[test]
-    fn test_tree_intersect_interval() {
-        let mut tree = ArrayBackedIntervalTree::new();
-        tree.insert(12..34, 0);
-        tree.insert(0..23, 1);
-        tree.insert(34..56, 2);
-
-        tree.index();
-
-        let iv = Interval::new(20..40).unwrap();
-
-        let overlap = tree.intersect(iv);
-
-        let mut expected = ArrayBackedIntervalTree::new();
-        expected.insert(20..34, 0);
-        expected.insert(20..23, 1);
-        expected.insert(34..40, 2);
-
-        assert_eq!(overlap, expected);
-    }
-
-    #[test]
     fn test_tree_size() {
-        let mut tree = ArrayBackedIntervalTree::new();
-        tree.insert(12..34, 0);
-        tree.insert(0..23, 1);
-        tree.insert(34..56, 2);
+        let mut tree: ArrayBackedIntervalTree<Entry<i32>> = ArrayBackedIntervalTree::new();
+        tree.insert(Entry::new(
+            (12..34).into(),
+            0,
+        ));
+        tree.insert(Entry::new(
+            (0..23).into(),
+            1,
+        ));
+        tree.insert(Entry::new(
+            (34..56).into(),
+            2,
+        ));
 
         assert_eq!(tree.len(), 3);
     }
@@ -538,7 +564,7 @@ mod tests {
                 intervals
                     .into_iter()
                     .enumerate()
-                    .map(|(i, (start, len))| (start..start + len, i)),
+                    .map(|(i, (start, len))| Entry::new((start..start + len).into(), i)),
             );
 
             let (start, len) = query;
@@ -548,8 +574,8 @@ mod tests {
                 .entries
                 .iter()
                 .filter_map(|internal| {
-                    if internal.interval.start < end && start < internal.interval.end {
-                        Some(internal)
+                    if internal.interval().start < end && start < internal.interval().end {
+                        Some(&internal.data)
                     } else {
                         None
                     }
