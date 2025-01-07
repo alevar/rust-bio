@@ -150,6 +150,37 @@ where
         tmp.map(|&i| &self.entries[i].data)
     }
 
+    /// Get the mutable entry at the given index
+    /// Returns `None` if the index is out of bounds
+    /// 
+    /// # Arguments
+    /// 
+    /// * `index` - The index of the entry to get
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use bio::data_structures::interval_tree::ArrayBackedIntervalTree;
+    /// 
+    /// let mut tree = ArrayBackedIntervalTree::new();
+    /// tree.insert(12..34, 0);
+    /// tree.insert(0..23, 1);
+    /// tree.insert(34..56, 2);
+    /// tree.index()
+    /// 
+    /// let mut entry = tree.get_mut(0).unwrap();
+    /// entry = 3;
+    /// assert_eq!(entry, 3);
+    /// ```
+    
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut E> {
+        // get the index of the entry in the tree
+        let tree_idx = self.index.get(index).unwrap().clone();
+        // get the mutable reference to the entry
+        let entry = self.entries.get_mut(tree_idx).map(|e| &mut e.data);
+        entry
+    }
+
     /// Find overlapping intervals in the index.
     /// Returns a vector of entries, consisting of the interval and its associated data.
     ///
@@ -548,6 +579,27 @@ mod tests {
         ));
 
         assert_eq!(tree.len(), 3);
+    }
+
+    #[test]
+    fn test_entry_mutability(){
+        let mut tree: ArrayBackedIntervalTree<Entry<i32>> = ArrayBackedIntervalTree::new();
+        tree.insert(Entry::new(
+            (12..34).into(),
+            0,
+        ));
+        tree.insert(Entry::new(
+            (0..23).into(),
+            1,
+        ));
+        tree.insert(Entry::new(
+            (34..56).into(),
+            2,
+        ));
+        tree.index();
+        let mut first = tree.first_mut().unwrap();
+        first.data = 3;
+        assert_eq!(first.data, 3);
     }
 
     proptest! {
