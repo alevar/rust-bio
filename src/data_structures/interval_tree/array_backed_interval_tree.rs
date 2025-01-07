@@ -63,7 +63,7 @@ where
         Default::default()
     }
 
-    pub fn insert(&mut self, entry: E) {
+    pub fn insert(&mut self, entry: E) -> usize {
         let max = entry.interval().end;
         self.entries.push(InternalEntry {
             data: entry,
@@ -72,6 +72,7 @@ where
         });
         self.index.push(self.entries.len()-1);
         self.indexed = false;
+        self.entries.len() - 1
     }
 
     pub fn index(&mut self) {
@@ -331,7 +332,7 @@ where
     fn from_iter<T: IntoIterator<Item = E>>(iter: T) -> Self {
         let mut tree = Self::new();
         iter.into_iter()
-            .for_each(|entry| tree.insert(entry));
+            .for_each(|entry| { tree.insert(entry); });
         tree.index();
         tree
     }
